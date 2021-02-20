@@ -1,0 +1,1 @@
+SET mkd_db="mongodb+srv://vuhuycto:quanghuy0211@cluster0.sgpxy.mongodb.net/mkd?retryWrites=true&w=majority" && SET mkd_jwtPrivateKey=1234

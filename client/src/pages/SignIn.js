@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useFormik } from "formik";
 import * as Yup from "yup";
-import { Link } from "react-router-dom";
+import { Link, useHistory } from "react-router-dom";
 import styled from "styled-components";
+import { toast } from "react-toastify";
 
 import authService from "../services/authService";
 import {
@@ -12,8 +13,11 @@ import {
   FormContainer,
   Input,
 } from "../components/form/authentication";
+import { useRouting } from "../hooks/routing";
 
 function SignIn() {
+  const history = useHistory();
+  const routing = useRouting(history.location.pathname);
   const [loading, setLoading] = useState(false);
 
   const formik = useFormik({
@@ -23,11 +27,20 @@ function SignIn() {
     },
     validationSchema,
     onSubmit: async function (values) {
-      setLoading(true);
-      await authService.login(values.email, values.password);
-      window.location = "/";
+      try {
+        setLoading(true);
+        await authService.login(values.email, values.password);
+        window.location = "/";
+      } catch (error) {
+        setLoading(false);
+        toast.error("Your email or password is invalid. Please try again!");
+      }
     },
   });
+
+  useEffect(() => {
+    if (authService.getCurrentUser()) routing.push("/documents");
+  }, []);
 
   return (
     <FormContainer>

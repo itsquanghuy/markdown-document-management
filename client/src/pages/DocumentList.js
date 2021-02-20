@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Link, Redirect, useHistory } from "react-router-dom";
+import { Redirect, useHistory } from "react-router-dom";
 import { css } from "@emotion/core";
 import ClipLoader from "react-spinners/ClipLoader";
 import styled from "styled-components";
@@ -9,9 +9,11 @@ import { FiUsers } from "react-icons/fi";
 
 import authService from "./../services/authService";
 import documentService from "./../services/documentService";
+import { useRouting } from "../hooks/routing";
 
 function DocumentList() {
   const history = useHistory();
+  const routing = useRouting(history.location.pathname);
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -22,16 +24,24 @@ function DocumentList() {
   }
 
   useEffect(() => {
+    if (!authService.getCurrentUser()) return routing.push("/signin");
     getDocumentList();
   }, []);
 
   function handleCreateDocument() {
-    history.push("/documents/create");
+    routing.push("/documents/create");
   }
 
   async function handleSignOut() {
     await authService.logout();
     window.location = "/";
+  }
+
+  function handleToDocument(path, data) {
+    routing.push({
+      pathname: path,
+      state: data,
+    });
   }
 
   return (
@@ -71,10 +81,9 @@ function DocumentList() {
                 {documents.map((document) => (
                   <Item
                     key={document._id}
-                    to={{
-                      pathname: `/documents/${document._id}`,
-                      state: document,
-                    }}
+                    onClick={() =>
+                      handleToDocument(`/documents/${document._id}`, document)
+                    }
                   >
                     <ItemContent>{document.content}</ItemContent>
                     <Title>
@@ -110,7 +119,8 @@ const override = css`
   border-color: red;
 `;
 
-const Item = styled(Link)`
+const Item = styled.div`
+  cursor: pointer;
   text-decoration: none;
   color: var(--black);
   border: 0.1rem solid var(--light-grey);

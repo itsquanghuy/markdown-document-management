@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useHistory } from "react-router-dom";
 import PropTypes from "prop-types";
 import { useFormik } from "formik";
 import * as Yup from "yup";
@@ -12,6 +13,7 @@ import {
   FiSave,
   FiXCircle,
   FiChevronLeft,
+  FiSend,
 } from "react-icons/fi";
 import { ImShare2 } from "react-icons/im";
 import { BiSearch } from "react-icons/bi";
@@ -20,54 +22,72 @@ import { toast } from "react-toastify";
 import documentService from "./../services/documentService";
 import authService from "./../services/authService";
 import userService from "./../services/userService";
+import commentService from "./../services/commentService";
 import "./Document.css";
 import Modal from "../components/Modal";
+import { useRouting } from "../hooks/routing";
 
-function Document({ mode, location, history }) {
+function Document({ mode, location }) {
+  const createOption = mode && mode === "create";
+  const history = useHistory();
+  const routing = useRouting(history.location.pathname);
+  const [document, setDocument] = useState(
+    !createOption
+      ? location.state
+        ? location.state
+        : null
+      : {
+          title: "",
+          content: "",
+          allowSharing: false,
+          whoCanAccess: [],
+        }
+  );
+  const [comments, setComments] = useState([]);
+  const [initialDocument, setInititalDocument] = useState(
+    location.state ? location.state : null
+  );
   const [emailInput, setEmailInput] = useState("");
-  const [allowSharing, setAllowSharing] = useState(
-    mode === "create" ? false : location.state.allowSharing
-  );
-  const [whoCanAccess, setWhoCanAccess] = useState(
-    mode === "create" ? [] : [...location.state.whoCanAccess]
-  );
   const [editMode, setEditMode] = useState(
-    mode === "create"
-      ? true
-      : authService.getCurrentUser()._id === location.state.userId
+    document
+      ? createOption
+        ? true
+        : authService.getCurrentUser()._id === document.userId
+      : true
   );
   const [readOnly, setReadOnly] = useState(false);
   const [deletePrompt, setDeletePrompt] = useState(false);
   const [sharePrompt, setSharePrompt] = useState(false);
+  const [commentInput, setCommentInput] = useState("");
 
   const formik = useFormik({
     initialValues: {
-      title: String(mode === "create" ? "" : location.state.title),
-      content: String(mode === "create" ? "" : location.state.content),
+      title: document ? String(createOption ? "" : document.title) : "",
+      content: document ? String(createOption ? "" : document.content) : "",
     },
     validationSchema,
     onSubmit: async function (values) {
       try {
-        if (mode === "create") {
+        if (createOption) {
           const response = await documentService.create({
             ...values,
-            allowSharing: allowSharing,
-            whoCanAccess: [...whoCanAccess],
+            allowSharing: document.allowSharing,
+            whoCanAccess: [...document.whoCanAccess],
           });
           if (response) {
             toast.success("Successfully created a document");
-            history.push({
+            routing.push({
               pathname: `/documents/${response.data._id}`,
               state: response.data,
             });
           }
-        } else if (mode === "update") {
-          const response = await documentService.update(location.state._id, {
+        } else {
+          const response = await documentService.update(document._id, {
             ...values,
-            allowSharing: allowSharing,
-            whoCanAccess: [...whoCanAccess],
+            allowSharing: document.allowSharing,
+            whoCanAccess: [...document.whoCanAccess],
           });
-          if (response) toast.success("Successfully updated the document");
+          if (response) toast.success("Successfully shared the document");
         }
       } catch (error) {
         toast.error("Cannot create or update document");
@@ -75,12 +95,28 @@ function Document({ mode, location, history }) {
     },
   });
 
+  useEffect(() => {
+    if (!createOption)
+      if (!document)
+        documentService
+          .get(history.location.pathname.replace("/documents/", ""))
+          .then(({ data }) => {
+            setDocument(data);
+            setInititalDocument(data);
+            formik.setFieldValue("title", data.title);
+            formik.setFieldValue("content", data.content);
+            commentService.get(data._id).then(({ data }) => setComments(data));
+          });
+      else
+        commentService.get(document._id).then(({ data }) => setComments(data));
+  }, []);
+
   function handleDeleteDocument() {
     setDeletePrompt(true);
   }
 
   async function handleYesDelete() {
-    if (mode === "update") await documentService.del(location.state._id);
+    if (!createOption) await documentService.del(document._id);
     history.goBack();
   }
 
@@ -99,43 +135,71 @@ function Document({ mode, location, history }) {
   async function handleFindUserByEmail() {
     setEmailInput("");
 
-    for (let i = 0; i < whoCanAccess.length; i++)
-      if (whoCanAccess[i].email === emailInput) return;
+    for (let i = 0; i < document.whoCanAccess.length; i++)
+      if (document.whoCanAccess[i].email === emailInput) return;
 
-    setAllowSharing(true);
+    setDocument({ ...document, allowSharing: true });
 
     try {
-      const { data } = await userService.findUserByEmail(emailInput);
-      setWhoCanAccess([...whoCanAccess, data]);
+      const { data: userData } = await userService.findUserByEmail(emailInput);
+
+      const updatedData = {
+        ...formik.values,
+        allowSharing: true,
+        whoCanAccess: [...document.whoCanAccess, userData],
+      };
+
+      const { data: documentData } = await documentService.update(
+        document._id,
+        updatedData
+      );
+      if (documentData) {
+        toast.success(`Successfully shared to ${userData.email}`);
+        setDocument({ ...documentData });
+        setInititalDocument({ ...documentData });
+      }
     } catch (error) {
       toast.error(`No user with email ${emailInput} is found!`);
     }
   }
 
   function handleCancelSharing() {
-    setAllowSharing(
-      mode === "create" ? allowSharing : location.state.allowSharing
-    );
-    setWhoCanAccess(
-      mode === "create" ? [...whoCanAccess] : [...location.state.whoCanAccess]
-    );
+    setDocument({ ...initialDocument });
     setSharePrompt(false);
   }
 
-  function handleDoneAddSharedUsers() {
+  async function handleDoneAddSharedUsers() {
     setSharePrompt(false);
   }
 
-  function handleRemoveWhoCanAccess(user) {
-    setWhoCanAccess([
-      ...whoCanAccess.filter(function remove(sharedUser) {
+  async function handleRemoveWhoCanAccess(user) {
+    const filtered = [
+      ...document.whoCanAccess.filter(function remove(sharedUser) {
         return user !== sharedUser;
       }),
-    ]);
+    ];
+
+    try {
+      const updatedData = {
+        title: document.title,
+        content: document.content,
+        allowSharing: filtered.length !== 0,
+        whoCanAccess: [...filtered],
+      };
+
+      const { data } = await documentService.update(document._id, updatedData);
+      if (data) {
+        toast.success(`Successfully remove ${user.email} from sharing option`);
+        setDocument({ ...data });
+        setInititalDocument({ ...data });
+      }
+    } catch (error) {
+      toast.error(`Unsuccessfully remove ${user.email} from sharing option`);
+    }
   }
 
   function handleGoBack() {
-    history.push("/documents");
+    routing.push("/documents");
   }
 
   function handleKeyDown(keyEvent) {
@@ -144,141 +208,215 @@ function Document({ mode, location, history }) {
     }
   }
 
+  async function handleAddComment(evt) {
+    const { data: me } = await userService.me();
+    const { data: createdComment } = await commentService.post(document._id, {
+      content: commentInput,
+      user: { _id: me._id, name: me.name, email: me.email },
+    });
+    setComments([...comments, createdComment]);
+    setCommentInput("");
+  }
+
+  async function handleRemoveComment(comment) {
+    const filtered = [
+      ...comments.filter(function deleted(c) {
+        return c !== comment;
+      }),
+    ];
+
+    try {
+      await commentService.remove(document._id, comment._id);
+      toast.success(`Successfully delete comment with id ${comment._id}`);
+      setComments(filtered);
+    } catch (error) {
+      toast.error(`Cannot delete comment with id ${comment._id}`);
+    }
+  }
+
   return (
     <>
-      {deletePrompt && (
-        <Modal width="25%" height="10rem">
-          <Prompt>Are you sure?</Prompt>
-          <ButtonGroup>
-            <No type="button" onClick={handleNoDelete}>
-              No
-            </No>
-            <Yes type="button" onClick={handleYesDelete}>
-              Yes
-            </Yes>
-          </ButtonGroup>
-        </Modal>
-      )}
-      {sharePrompt && (
-        <Modal width="50%" height="20rem">
-          <SearchInputContainer>
-            <SearchInput
-              type="text"
-              value={emailInput}
-              onChange={(evt) => setEmailInput(evt.target.value)}
-            />
-            <BiSearch
-              size={24}
-              cursor={"pointer"}
-              onClick={handleFindUserByEmail}
-            />
-          </SearchInputContainer>
-          <SharedUsersContainer>
-            {whoCanAccess.map((user) => (
-              <SharedUser key={user._id}>
-                <p>
-                  {user.name} - {user.email}
-                </p>
-                <FiXCircle
-                  size={20}
-                  cursor={"pointer"}
-                  color={"var(--danger)"}
-                  onClick={() => handleRemoveWhoCanAccess(user)}
-                />
-              </SharedUser>
-            ))}
-          </SharedUsersContainer>
-          <ButtonGroup>
-            <Cancel type="button" onClick={handleCancelSharing}>
-              Cancel
-            </Cancel>
-            <Done type="button" onClick={handleDoneAddSharedUsers}>
-              Share
-            </Done>
-          </ButtonGroup>
-        </Modal>
-      )}
-      <Form>
-        <TaskBar>
-          <FiChevronLeft
-            size={24}
-            cursor={"pointer"}
-            style={{ paddingLeft: "1rem" }}
-            onClick={handleGoBack}
-          />
-          <TitleContainer>
-            <div>
-              <label htmlFor="title"></label>
-              <TitleInput
-                onKeyDown={handleKeyDown}
-                type="text"
-                id="title"
-                name="title"
-                disabled={!editMode}
-                placeholder={mode === "create" ? "Title" : ""}
-                value={formik.values.title}
-                onChange={formik.handleChange}
-                error={formik.errors.title}
-              />
-            </div>
-            {editMode && (
-              <ActionContainer>
-                <Toggle onClick={handleToggle}>
-                  {!readOnly ? <FiEyeOff size={24} /> : <FiEye size={24} />}
-                </Toggle>
-                <FiSave
-                  size={24}
-                  color={"var(--tertiary-color)"}
-                  cursor={"pointer"}
-                  type="button"
-                  onClick={formik.handleSubmit}
-                />
-                <FiTrash2
-                  size={24}
-                  color={"var(--danger)"}
-                  cursor={"pointer"}
-                  onClick={handleDeleteDocument}
-                />
-                <ImShare2
-                  size={24}
-                  color={"var(--dark-grey)"}
-                  cursor={"pointer"}
-                  onClick={handleShareDocument}
-                />
-              </ActionContainer>
-            )}
-          </TitleContainer>
-        </TaskBar>
-        <ContentContainer>
-          {editMode ? (
-            <View>
-              {!readOnly ? (
-                <>
-                  <label htmlFor="content"></label>
-                  <TextArea
-                    id="content"
-                    name="content"
-                    autoFocus
-                    value={formik.values.content}
-                    onChange={formik.handleChange}
-                    error={formik.errors.content}
-                  />
-                </>
-              ) : (
-                <Previewer className="previewer">
-                  {HtmlParser(marked(formik.values.content))}
-                </Previewer>
-              )}
-            </View>
-          ) : (
-            <View>
-              <Previewer className="previewer">
-                {HtmlParser(marked(formik.values.content))}
-              </Previewer>
-            </View>
+      {document && (
+        <>
+          {deletePrompt && (
+            <Modal width="25%" height="10rem">
+              <Prompt>Are you sure?</Prompt>
+              <ButtonGroup>
+                <No type="button" onClick={handleNoDelete}>
+                  No
+                </No>
+                <Yes type="button" onClick={handleYesDelete}>
+                  Yes
+                </Yes>
+              </ButtonGroup>
+            </Modal>
           )}
-        </ContentContainer>
-      </Form>
+          {sharePrompt && (
+            <Modal width="50%" height="27rem">
+              <ShareHeaderContainer>
+                <ShareHeaderHeading>Share this document to</ShareHeaderHeading>
+              </ShareHeaderContainer>
+              <SearchInputContainer>
+                <SearchInput
+                  type="text"
+                  value={emailInput}
+                  onChange={(evt) => setEmailInput(evt.target.value)}
+                />
+                <BiSearch
+                  size={24}
+                  cursor="pointer"
+                  onClick={handleFindUserByEmail}
+                />
+              </SearchInputContainer>
+              <SharedUsersContainer>
+                {document.whoCanAccess.map((user) => (
+                  <SharedUser key={user._id}>
+                    <p>
+                      {user.name} - {user.email}
+                    </p>
+                    <FiXCircle
+                      size={20}
+                      cursor="pointer"
+                      color={"var(--danger)"}
+                      onClick={() => handleRemoveWhoCanAccess(user)}
+                    />
+                  </SharedUser>
+                ))}
+              </SharedUsersContainer>
+              <ButtonGroup>
+                <Cancel type="button" onClick={handleCancelSharing}>
+                  Cancel
+                </Cancel>
+                <Done type="button" onClick={handleDoneAddSharedUsers}>
+                  Done
+                </Done>
+              </ButtonGroup>
+            </Modal>
+          )}
+          <Form>
+            <TaskBar>
+              <FiChevronLeft
+                size={24}
+                cursor="pointer"
+                style={{ paddingLeft: "1rem" }}
+                onClick={handleGoBack}
+              />
+              <TitleContainer>
+                <div>
+                  <label htmlFor="title"></label>
+                  <TitleInput
+                    onKeyDown={handleKeyDown}
+                    type="text"
+                    id="title"
+                    name="title"
+                    disabled={!editMode}
+                    placeholder={createOption ? "Title" : ""}
+                    value={formik.values.title}
+                    onChange={formik.handleChange}
+                    error={formik.errors.title}
+                  />
+                </div>
+                {editMode && (
+                  <ActionContainer>
+                    <Toggle onClick={handleToggle}>
+                      {!readOnly ? <FiEyeOff size={24} /> : <FiEye size={24} />}
+                    </Toggle>
+                    <FiSave
+                      size={24}
+                      color={"var(--tertiary-color)"}
+                      cursor="pointer"
+                      type="button"
+                      onClick={formik.handleSubmit}
+                    />
+                    <FiTrash2
+                      size={24}
+                      color={"var(--danger)"}
+                      cursor="pointer"
+                      onClick={handleDeleteDocument}
+                    />
+                    {!createOption && (
+                      <ImShare2
+                        size={24}
+                        color={"var(--dark-grey)"}
+                        cursor="pointer"
+                        onClick={handleShareDocument}
+                      />
+                    )}
+                  </ActionContainer>
+                )}
+              </TitleContainer>
+            </TaskBar>
+            <ContentContainer createOption={createOption}>
+              {editMode ? (
+                <View>
+                  {!readOnly ? (
+                    <>
+                      <label htmlFor="content"></label>
+                      <TextArea
+                        id="content"
+                        name="content"
+                        autoFocus
+                        value={formik.values.content}
+                        onChange={formik.handleChange}
+                        error={formik.errors.content}
+                      />
+                    </>
+                  ) : (
+                    <Previewer className="previewer">
+                      {HtmlParser(marked(formik.values.content))}
+                    </Previewer>
+                  )}
+                </View>
+              ) : (
+                <View>
+                  <Previewer className="previewer">
+                    {HtmlParser(marked(formik.values.content))}
+                  </Previewer>
+                </View>
+              )}
+              {!createOption && (
+                <CommentContainer>
+                  <CommentSection>
+                    {comments.length !== 0 &&
+                      comments.map((comment) => (
+                        <Comment key={comment._id}>
+                          <CommentDescription>
+                            <CommentUserName>
+                              {comment.user.name} - {comment.user.email}
+                            </CommentUserName>
+                            <CommentContent>{comment.content}</CommentContent>
+                          </CommentDescription>
+                          {authService.getCurrentUser()._id ===
+                            comment.user._id && (
+                            <CommentCallToAction>
+                              <FiTrash2
+                                size={20}
+                                cursor="pointer"
+                                onClick={() => handleRemoveComment(comment)}
+                              />
+                            </CommentCallToAction>
+                          )}
+                        </Comment>
+                      ))}
+                  </CommentSection>
+                  <CommentInputContainer>
+                    <CommentInput
+                      placeholder="Your Comment"
+                      value={commentInput}
+                      onChange={(evt) => setCommentInput(evt.target.value)}
+                    />
+                    <FiSend
+                      size={24}
+                      onClick={handleAddComment}
+                      cursor="pointer"
+                    />
+                  </CommentInputContainer>
+                </CommentContainer>
+              )}
+            </ContentContainer>
+          </Form>
+        </>
+      )}
     </>
   );
 }
@@ -295,6 +433,76 @@ Document.propTypes = {
 };
 
 // Styles
+const CommentContainer = styled.div`
+  background-color: #fff;
+  width: 80%;
+  overflow: auto;
+  height: 60vh;
+  border-radius: 0.5rem;
+  padding: 1rem;
+`;
+
+const CommentSection = styled.div`
+  height: 50vh;
+  overflow: auto;
+  margin-bottom: 1rem;
+`;
+
+const CommentDescription = styled.div`
+  padding-right: 2rem;
+`;
+
+const CommentUserName = styled.h4`
+  font-size: 1.8rem;
+  margin-bottom: 0;
+`;
+
+const Comment = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1rem 0 1rem;
+
+  &:not(:last-child) {
+    border-bottom: 0.1rem solid var(--light-grey);
+  }
+`;
+
+const CommentContent = styled.p`
+  font-size: 1.6rem;
+  margin-top: 1rem;
+`;
+
+const CommentInputContainer = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+`;
+
+const CommentInput = styled.textarea`
+  display: block;
+  width: 97%;
+  height: 6vh;
+  overflow: auto;
+  border-radius: 0.5rem;
+  outline: none;
+  border: 0.1rem solid var(--medium-grey);
+  font-size: 1.8rem;
+  resize: none;
+  font-family: inherit;
+  padding: 0.5rem;
+  margin-right: 1rem;
+
+  &:focus {
+    border: 0.2rem solid var(--medium-grey);
+  }
+`;
+
+const CommentCallToAction = styled.div`
+  width: 20%;
+  text-align: right;
+`;
+
 const Prompt = styled.h3`
   font-size: 2rem;
   padding-left: 1.5rem;
@@ -339,6 +547,20 @@ const Cancel = styled.button`
   color: var(--dark-grey);
   font-weight: 600;
   cursor: pointer;
+`;
+
+const ShareHeaderContainer = styled.div`
+  margin-top: 1rem;
+  padding: 1rem 1rem 0 1rem;
+`;
+
+const ShareHeaderHeading = styled.div`
+  font-size: 3rem;
+  font-weight: 600;
+
+  @media only screen and (max-width: 68rem) {
+    font-size: 2rem;
+  }
 `;
 
 const SearchInputContainer = styled.div`
@@ -446,6 +668,15 @@ const ContentContainer = styled.div`
   padding: 10rem 0 6rem 0;
   margin: 0rem 0 2rem 0;
   overflow: auto;
+  ${(props) =>
+    props.createOption
+      ? `
+    display: block;
+  `
+      : `
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+  `}
 
   @media only screen and (max-width: 60rem) {
     padding: 6.5rem 0 0 0;
@@ -453,8 +684,8 @@ const ContentContainer = styled.div`
 `;
 
 const View = styled.div`
-  width: 60%;
-  height: 100vh;
+  width: 80%;
+  height: 100%;
   margin 0 auto;
 
   @media only screen and (max-width: 87.5rem) {
@@ -471,8 +702,9 @@ const TextArea = styled.textarea`
   width: 100%;
   height: 100%;
   margin: 0 auto;
+  border-radius: 0.5rem;
   overflow: auto;
-  border: ${(props) => (props.error ? "0.1rem solid var(--danger)" : "none")};
+  border: ${(props) => (props.error ? "0.2rem solid var(--danger)" : "none")};
   outline: none;
   resize: none;
   padding: 2rem;
@@ -485,7 +717,7 @@ const TextArea = styled.textarea`
 
 const Previewer = styled.div`
   width: 100%;
-  height: 100%;
+  height: 80vh;
   overflow: auto;
   background-color: #fff;
   font-size: 1.6rem;

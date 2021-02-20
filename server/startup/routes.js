@@ -4,6 +4,7 @@ const error = require("./../middleware/error");
 const auth = require("./../routes/auth");
 const users = require("./../routes/users");
 const documents = require("./../routes/documents");
+const comments = require("./../routes/comments");
 
 module.exports = function (app) {
   app.use(express.json());
@@ -11,5 +12,6 @@ module.exports = function (app) {
   app.use("/api/auth", auth);
   app.use("/api/users", users);
   app.use("/api/documents", documents);
+  app.use("/api/comments", comments);
   app.use(error);
 };

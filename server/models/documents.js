@@ -5,8 +5,14 @@ function validateDocument(document) {
   return Joi.validate(document, {
     title: Joi.string().min(1).required(),
     content: Joi.string().min(0).required(),
-    allowSharing: Joi.boolean().required(),
-    whoCanAccess: Joi.array().required(),
+    allowSharing: Joi.boolean(),
+    whoCanAccess: Joi.array().items(
+      Joi.object().keys({
+        _id: Joi.objectId().required(),
+        name: Joi.string().min(2).max(50).required(),
+        email: Joi.string().min(5).max(255).required().email(),
+      })
+    ),
   });
 }
 

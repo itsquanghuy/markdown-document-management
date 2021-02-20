@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useHistory } from "react-router-dom";
 import { useFormik } from "formik";
 import * as Yup from "yup";
 
 import userService from "./../services/userService";
+import authService from "../services/authService";
 import {
   Button,
   ButtonGroup,
@@ -10,8 +12,11 @@ import {
   FormContainer,
   Input,
 } from "../components/form/authentication";
+import { useRouting } from "../hooks/routing";
 
 function Register() {
+  const history = useHistory();
+  const routing = useRouting(history.location.pathname);
   const [loading, setLoading] = useState(false);
   const formik = useFormik({
     initialValues: {
@@ -26,6 +31,10 @@ function Register() {
       window.location = "/";
     },
   });
+
+  useEffect(() => {
+    if (authService.getCurrentUser()) routing.push("/documents");
+  }, [routing]);
 
   return (
     <FormContainer>
